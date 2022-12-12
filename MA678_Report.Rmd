@@ -1,0 +1,316 @@
+---
+title: "MA678_Report"
+author: "Yirong Yuan"
+date: "2022-12-11"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE,echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+Github Link:<https://github.com/yiryuan/MA678_Final_Project.git>
+
+### **\<Abstract\>**
+
+This project focuses on estimating the price of Boston Airbnb. In this
+project, I used the dataset which is downloaded from
+<http://data.insideairbnb.com/united-states/ma/boston/2022-09-15/visualisations/listings.csv.>
+To estimate the price, I explored how factors, such as room type,
+minimum night, and so on, influenced the price of Boston Airbnb. The
+project has two parts: Exploratory Data Analysis and Multilevel Bayesian
+Analysis. Exploratory Data Analysis visually displayed the relationship
+between factor and price. In Multilevel Bayesian Analysis, I fitted a
+multilevel model based on the different neighborhoods to Airbnb prices
+for rentals in the Boston market to investigate the neighborhood
+heterogeneity.
+
+```{r,include=FALSE}
+library(dplyr)
+library(magrittr)
+library(readr)
+library(tidyverse)
+library(tidytext)
+library(wordcloud)
+library(MASS)
+library(ggplot2)
+library(hrbrthemes)
+library(leaflet)
+library(viridis)
+library(arm)
+library(lme4)
+library(metaSEM)
+library(lmerTest)
+library(bayesplot)
+library(rstanarm)
+Boston_Airbnb <- read_csv("/Users/yirong/Desktop/listings.csv")
+```
+
+### **\<Introducation\>**
+
+#### **\<Background\>**
+
+Since 2007, Airbnb (ABNB) has been an online marketplace that connects
+people who want to rent out their homes with people looking for
+accommodations in specific locales. Today, Airbnb is a service operated
+and recognized around the world. Data analysis of the millions of
+listings offered through Airbnb is a critical element of the company.
+The massive amounts of data can be analyzed and used for security,
+business decision-making, understanding customer and provider (host)
+behavior and performance on the platform, guiding marketing programs,
+implementing innovative add-ons Serve, and more.
+
+Location is key to valuable real estate. Homes in cities with little
+room for expansion are more beneficial than those with plenty of space.
+Consider the accessibility, appearance, and amenities of a neighborhood,
+as well as development plans. The community also influences the price of
+Airbnb.
+
+#### **\<Data\>**
+
+I selected the target variable 'price' and a subset of 9 predictor
+variables from the original data listings.csv. I deleted the rows in
+which the prices of Airbnb are negative because it did not make sense.
+
+**id**: The Airbnb id number
+
+**price**: the Airbnb price
+
+**latitude and longitude**: The geographical information
+
+**neighbourhood**: The name of neighbourhood
+
+**room_type**: Type of room (Entire home/apt, Private room and Shared
+room)
+
+**minimum_nights**: The minimum number of nights that a guest can book 
+
+**number\_ of_reviews**: Total number of Airbnb guest ratings
+
+**availability_365:** The total number of days the listing is available
+for during the year 
+
+```{r,include=FALSE}
+## Delete the columns which only have a value
+cnames <- colnames(Boston_Airbnb)
+x <- 1:dim(Boston_Airbnb)[2]
+T <- NULL
+for(i in x){T <- c(T, dim(unique(Boston_Airbnb[i]))[1])}
+drop_cols <- cnames[which(T == 1)]
+Boston_Airbnb %<>% dplyr::select(!all_of(drop_cols))
+##Select the columns that will be used in later analysis
+Boston_Airbnb_Selected<-Boston_Airbnb %>% dplyr::select(id,name,neighbourhood,
+                                                        latitude,longitude,room_type,
+                                                        price, minimum_nights,number_of_reviews,
+                                                        availability_365)
+##ensure there is no NA in the data frame
+na_value<-which(is.na(Boston_Airbnb_Selected))
+
+##Delete the rows which prices of airbnb is negative 
+Boston_Airbnb_Selected<-Boston_Airbnb_Selected %>% filter(price > 0)
+
+##summary the data frame and make a suset to do data visualization better
+summary(Boston_Airbnb_Selected)
+subset_price <-Boston_Airbnb_Selected %>% filter(price <500)
+```
+
+### \<Method\>
+
+#### \<Exploratory Data Analysis\>
+
+Figures 2 and 3 both display the relationship between price and
+geography. Figure 2 shows the detailed geographic location of the
+listings. Figure 3 shows more clearly the price situation in different
+neighborhoods. Figure 4 shows the relationship between listings' prices
+and minimum nights in different neighborhoods and housing types. Figure
+5 shows the relationship between listings' prices and the number of
+reviews in different neighborhoods and housing types.
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+##See what words always are used to describe  Boston Airbnb name room
+description <- data.frame(Boston_Airbnb$name)
+description<-description %>% unnest_tokens(word, Boston_Airbnb.name)
+data(stop_words)
+description <- description %>% anti_join(stop_words)
+description <- description %>% count(word, sort = TRUE) 
+description%>% with(wordcloud(word, n, max.words = 50, random.order = FALSE, rot.per = 0.35, 
+                          colors = brewer.pal(8, "Dark2")))
+##display the price distribution in Boston
+pal <-colorNumeric(palette = rainbow(6),domain = Boston_Airbnb_Selected$price)
+p2<-leaflet(data = Boston_Airbnb_Selected) %>%  
+  addProviderTiles(providers$CartoDB.Positron) %>% 
+  addCircleMarkers(~longitude, ~latitude, color = ~pal(price), weight = 1, radius=1.5,
+                   fillOpacity = 1, opacity = 1,label = paste("Neighbourhood:",Boston_Airbnb_Selected$neighbourhood)) %>% 
+  addLegend("bottomright", pal = pal, values = ~price,title = "price(dollar)",opacity = 1)
+p2
+
+
+#display the data as they exist spatially spread out geographically.
+p3<-ggplot(Boston_Airbnb_Selected,aes(x=longitude,y=latitude,size=price,color=neighbourhood)) + 
+    geom_point(alpha=0.3) + 
+    guides(color='none') +
+    coord_fixed(1.3) + 
+    scale_size(labels = scales::dollar,breaks = signif(10^seq(5,9,0.5),2)) +
+    ggtitle( 
+      "Boston, MA, Spatial Layout of Housing Data",
+      "colored by neighbourhood and sized by price" 
+    )
+p3
+
+
+p4<-ggplot(subset_price,aes(x=minimum_nights,y=price,color=room_type,shape=room_type))+
+   geom_point(alpha=0.7,size=3) + 
+  scale_y_log10(labels=scales::dollar) + 
+  facet_wrap(~ neighbourhood, nrow=5, ncol=6) +
+  theme_classic() +
+  ggtitle(
+    "Price vs. Minimum_night", 
+    "by neighbourhood and colored by room_type indicator" )
+
+p4
+
+p5<-ggplot(subset_price,aes(x=number_of_reviews,y=price,color=room_type,shape=room_type))+
+   geom_point(alpha=0.7,size=3) + 
+  scale_y_log10(labels=scales::dollar) + 
+  facet_wrap(~ neighbourhood, nrow=5, ncol=6) +
+  theme_classic() +
+  ggtitle(
+    "Price vs. Number_of_review", 
+    "by neighbourhood and colored by room_type indicator" )
+p5
+
+
+```
+
+#### \<Multilevel Bayesian Analysis\>
+
+```{r,warning=FALSE,message=FALSE,cache=FALSE,eval=FALSE}
+M1<-stan_glmer(price~latitude+longitude+factor(room_type)+minimum_nights+number_of_reviews+availability_365+(1|neighbourhood),data=Boston_Airbnb_Selected)
+
+M2<-stan_glmer(price~latitude+longitude+factor(room_type)+minimum_nights+number_of_reviews+availability_365+(1|neighbourhood),family = neg_binomial_2,data=Boston_Airbnb_Selected)
+```
+
+```{r,warning=FALSE,message=FALSE,include=FALSE}
+M1<-stan_glmer(price~latitude+longitude+factor(room_type)+minimum_nights+number_of_reviews+availability_365+(1|neighbourhood),data=Boston_Airbnb_Selected)
+
+
+M2<-stan_glmer(price~latitude+longitude+factor(room_type)+minimum_nights+number_of_reviews+availability_365+(1|neighbourhood),family = neg_binomial_2,data=Boston_Airbnb_Selected)
+
+```
+
+
+```{r,r,warning=FALSE,message=FALSE,echo=FALSE}
+pp_check(M1)+ xlim(0, 500)
+pp_check(M2)+ xlim(0, 500)
+partial_data<-{M2} %T>% print()
+partial_data<-partial_data %>% 
+  coef() %$% neighbourhood %>%
+  rownames_to_column("neighbourhood") %>% 
+  as_tibble() %>%
+  dplyr::select(neighbourhood,contains("Intercept")) %>%
+  setNames(c("neighbourhood","base_price")) %>%
+  mutate(base_price = exp(base_price)) %>%
+  right_join( Boston_Airbnb_Selected)%>% mutate(neighbourhood=as.character(neighbourhood)) %>%
+  mutate(neighbourhood = factor(neighbourhood,levels=unique(neighbourhood[order(base_price)]))) 
+
+ggplot(partial_data,aes(x=longitude,y=latitude,size=price,color=neighbourhood)) + 
+    geom_point(alpha=0.3) + 
+    guides(color='none') +
+    coord_fixed(1.3) + 
+    scale_size(labels = scales::dollar,breaks = signif(10^seq(5,9,0.5),2)) +
+    ggtitle( 
+      "Boston, MA, Spatial Layout of Housing Data",
+      "colored by neighbourhood and sized by price" 
+    )
+
+```
+
+### **\<Result\>**
+
+I first tried to fit the multilevel models and then used the posterior
+predictive checking model to check these two models. The plots show the
+model with a negative binomial argument worked better(plot 2).
+
+I arrived at the following formula of fixed effect:
+
+Price = -93.7+ 2.9 \* latitude + 0.3\* longitude + 0.6\* Hotel room -0.8
+\*Private room -1.1\* shared room
+
+The model shows that latitude, longitude, and price are positively
+correlated. Hotel rooms will make room prices more expensive, while
+private and shared rooms will make room prices cheaper. Some
+neighborhoods positively correlate with the price(such as Back bay,
+Chinatown, downtown, Fenway, Harbor Islands, North End, South Boston
+Waterfront, and West Roxbury.
+
+In the last plot, I color the neighborhood according to the ordering
+dictated by the estimated price intercepts (base_price). This way, the
+higher-priced areas will be more toward the red end of the color
+spectrum.
+
+### **\<Discussion\>**
+
+I found the relationship between price and geography, and room type
+through the multilevel model. But I didn't find an association between
+price, minimum nights, and the number of reviews by the multilevel
+model. The previous EDA shows that the minimum nights and number of
+reviews are related to the price. Further research is needed on them.
+
+As seen from the posterior predictive checking model, my multilevel
+model does not fit perfectly, probably because of variables and data
+limitations. The fit of the price prediction model can be improved in
+the future.
+
+### **\<Appendix\>**
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+
+##make a plot to see the density and distribution of prices for each neigherhood
+A1 <- subset_price%>%
+  ggplot( aes(x=price, color=neighbourhood, fill=neighbourhood)) +
+    geom_histogram(alpha=0.6, binwidth = 5) +
+    scale_fill_viridis(discrete=TRUE) +
+    scale_color_viridis(discrete=TRUE) +
+    theme_ipsum() +
+    theme(
+      legend.position="none",
+      panel.spacing = unit(0.1, "lines"),
+      strip.text.x = element_text(size = 8)
+    ) +
+    xlab("") +
+    ylab("Assigned Probability (%)") +
+    facet_wrap(~neighbourhood) 
+A1
+
+##Density and distribution of prices for other predictors
+A2<-subset_price %>% filter(minimum_nights<200) %>% ggplot(aes(x=minimum_nights)) +
+    geom_histogram( binwidth=3, fill="#69b3a2", color="#e9ecef", alpha=0.9) +
+    theme_ipsum() +
+    theme( plot.title = element_text(size=15))
+A2
+
+A3<-subset_price %>% filter(number_of_reviews<300)%>% ggplot(aes(x=number_of_reviews)) +
+    geom_histogram( binwidth=3, fill="#404080", color="#e9ecef", alpha=0.9) +
+    theme_ipsum() +
+    theme(plot.title = element_text(size=15))
+A3
+
+A4<-subset_price %>%  ggplot(aes(x=availability_365)) +
+    geom_histogram( binwidth=3, fill="#999999", color="#e9ecef", alpha=0.9) +
+    theme_ipsum() +
+    theme(plot.title = element_text(size=15))
+A4
+
+##Density and distribution of prices for each room Type
+A5<-subset_price%>% 
+  ggplot(aes(x=room_type, y=price, fill=room_type)) +
+  geom_boxplot(show.legend = FALSE) + coord_flip() 
+A5
+
+summary(M2)
+
+```
